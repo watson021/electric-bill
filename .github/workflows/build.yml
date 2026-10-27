@@ -44,6 +44,7 @@ jobs:
           npx cap init "電費計算器" com.watson.electricbill --web-dir www
           npx cap add android
           npx cap sync android
+          printf '\nconfigurations.all {\n  resolutionStrategy {\n    force "org.jetbrains.kotlin:kotlin-stdlib:1.8.22"\n    force "org.jetbrains.kotlin:kotlin-stdlib-jdk7:1.8.22"\n    force "org.jetbrains.kotlin:kotlin-stdlib-jdk8:1.8.22"\n  }\n}\n' >> android/app/build.gradle
           cd android && chmod +x gradlew && ./gradlew assembleDebug
       - uses: actions/upload-artifact@v4
         with:
