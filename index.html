@@ -1,0 +1,142 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="theme-color" content="#2563eb">
+<link rel="manifest" href="manifest.json">
+<link rel="icon" href="icon.svg">
+<link rel="apple-touch-icon" href="icon.svg">
+<title>電費計算器</title>
+<style>
+  body{font-family:system-ui,"Microsoft JhengHei",sans-serif;background:#f3f4f6;margin:0;padding:16px;color:#222}
+  .card{max-width:480px;margin:0 auto 16px;background:#fff;border-radius:12px;padding:20px;box-shadow:0 2px 8px #0001}
+  h1{font-size:20px;margin:0 0 16px}
+  label{display:block;margin:12px 0 4px;font-size:14px;color:#555}
+  input,select{width:100%;box-sizing:border-box;padding:10px;font-size:16px;border:1px solid #ccc;border-radius:8px;background:#fff}
+  .row{display:flex;gap:10px}.row>div{flex:1}
+  .result{background:#eef6ff;border-radius:8px;padding:12px;margin-top:16px;line-height:1.9}
+  .total{font-size:22px;font-weight:bold;color:#d33}
+  button{margin-top:12px;padding:10px 16px;font-size:16px;border:0;border-radius:8px;background:#2563eb;color:#fff;cursor:pointer}
+  button.gray{background:#9ca3af}
+  table{width:100%;border-collapse:collapse;font-size:14px}
+  td,th{padding:6px 4px;border-bottom:1px solid #eee;text-align:right}
+  .err{color:#d33;font-size:14px;margin-top:8px}
+  .tier input{padding:6px;font-size:14px}
+  .hint{font-size:12px;color:#888;margin-top:6px}
+  .seg{display:flex;gap:8px}.seg button{flex:1;margin:0;background:#e5e7eb;color:#333}.seg button.on{background:#2563eb;color:#fff}
+  .hidden{display:none}
+</style>
+</head>
+<body>
+<div class="card">
+  <h1>⚡ 電費 + 房租計算器</h1>
+  <div class="row">
+    <div><label>上期電表度數</label><input id="prev" type="number" step="any" inputmode="decimal"></div>
+    <div><label>本期電表度數</label><input id="curr" type="number" step="any" inputmode="decimal"></div>
+  </div>
+
+  <label>計費方式</label>
+  <div class="seg"><button id="mFixed">固定單價</button><button id="mTier">階梯計費</button></div>
+
+  <div id="fixedBox">
+    <label>每度電價（元）</label><input id="rate" type="number" step="any" inputmode="decimal" value="5">
+  </div>
+
+  <div id="tierBox" class="hidden">
+    <label>計費月數（階梯上限會依月數放大，例：雙月帳單填 2）</label>
+    <input id="months" type="number" min="1" step="1" inputmode="numeric" value="1">
+    <label>階梯（每月度數上限 / 單價；最後一階上限留空＝無上限）</label>
+    <table class="tier"><tbody id="tiers"></tbody></table>
+    <button class="gray" id="addTier" type="button" style="margin-top:8px;padding:6px 10px;font-size:14px">＋ 新增階梯</button>
+    <div class="hint">預設為範例費率，請依你電費單的實際級距修改。</div>
+  </div>
+
+  <label>房租（元）</label><input id="rent" type="number" step="any" inputmode="decimal" value="0">
+  <label>備註／月份（選填）</label><input id="note" type="text" placeholder="例如 2026/10">
+  <div id="err" class="err"></div>
+  <div class="result" id="result">請輸入度數</div>
+  <button id="save">儲存本期紀錄</button>
+  <button class="gray" id="clear">清除歷史</button>
+</div>
+<div class="card">
+  <h1>歷史紀錄</h1>
+  <table><thead><tr><th style="text-align:left">備註</th><th>度數差</th><th>電費</th><th>租金</th><th>總計</th></tr></thead><tbody id="hist"></tbody></table>
+</div>
+<script>
+const $=id=>document.getElementById(id);
+const KEY="bill_history", SET="bill_settings";
+let history=JSON.parse(localStorage.getItem(KEY)||"[]");
+const DEF_TIERS=[[120,1.68],[330,2.45],[500,3.70],[700,5.04],[1000,6.24],[null,8.46]];
+let st=Object.assign({mode:"fixed",rate:"5",rent:"0",months:"1",tiers:DEF_TIERS},JSON.parse(localStorage.getItem(SET)||"{}"));
+
+function saveSet(){
+  st.rate=$("rate").value;st.rent=$("rent").value;st.months=$("months").value;
+  st.tiers=[...document.querySelectorAll("#tiers tr")].map(tr=>{
+    const [a,b]=tr.querySelectorAll("input");
+    return [a.value===""?null:parseFloat(a.value),parseFloat(b.value)||0];});
+  localStorage.setItem(SET,JSON.stringify(st));
+}
+function renderTiers(){
+  $("tiers").innerHTML=st.tiers.map(([lim,p],i)=>`<tr>
+   <td style="text-align:left">${i+1}階</td>
+   <td><input type="number" placeholder="無上限" value="${lim??""}"> 度</td>
+   <td><input type="number" step="any" value="${p}"> 元</td>
+   <td><button type="button" class="gray" data-del="${i}" style="margin:0;padding:4px 8px;font-size:12px">✕</button></td></tr>`).join("");
+  document.querySelectorAll("[data-del]").forEach(b=>b.onclick=()=>{saveSet();st.tiers.splice(+b.dataset.del,1);renderTiers();calc();});
+  document.querySelectorAll("#tiers input").forEach(i=>i.oninput=()=>{saveSet();calc();});
+}
+function setMode(m){
+  st.mode=m;
+  $("mFixed").classList.toggle("on",m==="fixed");$("mTier").classList.toggle("on",m==="tier");
+  $("fixedBox").classList.toggle("hidden",m!=="fixed");$("tierBox").classList.toggle("hidden",m!=="tier");
+  saveSet();calc();
+}
+function tierCost(used,tiers,months){
+  let rem=used,prevLim=0,cost=0,lines=[];
+  for(const [lim,p] of tiers){
+    if(rem<=0)break;
+    const top=lim==null?Infinity:lim*months;
+    const seg=Math.min(rem,top-prevLim);
+    if(seg>0){cost+=seg*p;lines.push(`${+seg.toFixed(2)}度 × ${p}`);rem-=seg;}
+    prevLim=top;
+  }
+  if(rem>0&&tiers.length){const p=tiers[tiers.length-1][1];cost+=rem*p;lines.push(`${+rem.toFixed(2)}度 × ${p}`);}
+  return {cost,lines};
+}
+function calc(){
+  const prev=parseFloat($("prev").value),curr=parseFloat($("curr").value);
+  const rent=parseFloat($("rent").value)||0;
+  $("err").textContent="";
+  if(isNaN(prev)||isNaN(curr)){$("result").textContent="請輸入度數";return null}
+  if(curr<prev){$("err").textContent="本期度數不能小於上期";$("result").textContent="—";return null}
+  const used=+(curr-prev).toFixed(2);
+  let elec,detail;
+  if(st.mode==="fixed"){
+    const rate=parseFloat($("rate").value)||0;
+    elec=Math.round(used*rate);detail=`${used} × ${rate} = ${elec} 元`;
+  }else{
+    const months=Math.max(1,parseInt($("months").value)||1);
+    const r=tierCost(used,st.tiers.map(t=>[t[0],t[1]]),months);
+    elec=Math.round(r.cost);detail=r.lines.join("<br>＋ ")+`<br>= ${elec} 元`;
+  }
+  const total=elec+rent;
+  $("result").innerHTML=`用電度數：${used} 度<br>電費：${detail}<br>房租：${rent} 元<br>應繳總額：<span class="total">${total} 元</span>`;
+  return {note:$("note").value,prev,curr,used,elec,rent,total};
+}
+function render(){
+  $("hist").innerHTML=history.slice().reverse().map(h=>`<tr><td style="text-align:left">${h.note||""}</td><td>${h.used}</td><td>${h.elec}</td><td>${h.rent}</td><td><b>${h.total}</b></td></tr>`).join("");
+}
+$("rate").value=st.rate;$("rent").value=st.rent;$("months").value=st.months;
+if(history.length)$("prev").value=history[history.length-1].curr;
+["prev","curr","rate","rent","months"].forEach(i=>$(i).addEventListener("input",()=>{saveSet();calc();}));
+$("mFixed").onclick=()=>setMode("fixed");$("mTier").onclick=()=>setMode("tier");
+$("addTier").onclick=()=>{saveSet();st.tiers.push([null,0]);renderTiers();};
+$("save").onclick=()=>{const r=calc();if(!r)return;history.push(r);localStorage.setItem(KEY,JSON.stringify(history));
+  $("prev").value=r.curr;$("curr").value="";$("note").value="";render();calc();};
+$("clear").onclick=()=>{if(confirm("確定清除全部歷史？")){history=[];localStorage.removeItem(KEY);render();}};
+renderTiers();render();setMode(st.mode);
+if("serviceWorker" in navigator)navigator.serviceWorker.register("sw.js").catch(()=>{});
+</script>
+</body>
+</html>
